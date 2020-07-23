@@ -422,7 +422,7 @@ class confint():
                                                         remote))]
             procs[-1].start()
 
-        outer_loop_num = self.num_design_pts_to_opt / thread_num + 1
+        outer_loop_num = self.num_design_pts_to_opt // thread_num + 1
         idxes_opt_pts_in_design_pts_ext = [self.idxes_opt_pts_in_design_pts[i] for i in range(self.num_design_pts_to_opt)] \
                                             + [np.inf for i in range(self.num_design_pts_to_opt, outer_loop_num * thread_num)]
 
