@@ -10,6 +10,8 @@ import cvxpy as cp
 from multiprocessing import Array, Pipe, Process
 
 from numpy.random import choice
+from scipy.spatial import ConvexHull
+from scipy import interpolate
 
 def rhs_of_eq8(ell_p_plue_1_ell_p, x_p_plus_1, x_p, tol=1e-8):
     ell_p_plus_1 = ell_p_plue_1_ell_p[0]
@@ -67,6 +69,10 @@ class confint():
                                             for i in range(self.num_design_pts_to_opt)]
         self.lo_opt_pts = np.zeros(self.num_design_pts_to_opt)
         self.hi_opt_pts = np.zeros(self.num_design_pts_to_opt)
+        
+        self.improved_lo_opt_pts = np.zeros(self.num_design_pts_to_opt)
+        self.improved_hi_opt_pts = np.zeros(self.num_design_pts_to_opt)
+        self.improved_hi_at_x = np.zeros(self.num_design_pts_to_opt)
 
         # shared memory
         self.lo = Array('d', m)
@@ -78,7 +84,7 @@ class confint():
         assert(J_card == len(cs))
         assert(J_card == len(self.ell_g_idxes_to_sum_over))
 
-    def sampling_pts_to_opt_over(self, sampling_ratio=1.0, tail_ratio=0.5):
+    def sampling_pts_to_opt_over(self, sampling_ratio, tail_ratio=0.5):
         if sampling_ratio == 1.0:
             return self.idxes_of_design_pts
         sorted_idxes_of_design_pts = sorted(self.idxes_of_design_pts)
@@ -316,18 +322,19 @@ class confint():
                     A_8.value = A_value_8
                     b_8.value = b_value_8
                 if (solver_choice == "ECOS"):
-                    prob.solve(verbose=want_verbose, solver=solver_choice, warm_start=True, abstol=1e-9, reltol=1e-9)  # , abstol_inacc=1e-9, reltol=1e-9, reltol_inacc=1e-9, feastol=1e-9
+                    prob.solve(verbose=False, solver=solver_choice, warm_start=True, abstol=1e-9, reltol=1e-9)  # , abstol_inacc=1e-9, reltol=1e-9, reltol_inacc=1e-9, feastol=1e-9
                 elif (solver_choice == "MOSEK"):
-                    prob.solve(verbose=want_verbose, solver=solver_choice, warm_start=True)
+                    prob.solve(verbose=False, solver=solver_choice, warm_start=True)
                 elif (solver_choice == "SCS"):
-                    prob.solve(verbose=want_verbose, solver=solver_choice, warm_start=True, eps=1e-9, max_iters=10000)
+                    prob.solve(verbose=False, solver=solver_choice, warm_start=True, eps=1e-9, max_iters=10000)
                 else:
                     print("ERROR: unsupported solver")
                     break
                 s_sum = np.sum(s.value) + np.sum(s_new.value)
                 objf_val = ell[p].value
                 end = time.time()
-                print("  objf (i.e., log prob)=%f, prob=%f, slack sum=%f, tau=%f, prob.status=%s, after iter #%d, time elapsed=%f" %
+                if(want_verbose):
+                    print("  objf (i.e., log prob)=%f, prob=%f, slack sum=%f, tau=%f, prob.status=%s, after iter #%d, time elapsed=%f" %
                     (objf_val, np.exp(objf_val), s_sum, tau.value, prob.status, iter_idx + 1, (end - start)))
             except Exception as e:
                 solver_failed = True
@@ -447,3 +454,66 @@ class confint():
 
         self.lo_opt_pts = np.array([self.lo[self.idxes_opt_pts_in_design_pts[i]] for i in range(self.num_design_pts_to_opt)])
         self.hi_opt_pts = np.array([self.hi[self.idxes_opt_pts_in_design_pts[i]] for i in range(self.num_design_pts_to_opt)])
+        
+    def remove_nan(self):
+        lo_nans = np.where(np.isnan(self.lo_opt_pts))
+        hi_nans = np.where(np.isnan(self.hi_opt_pts))
+        nans = np.union1d(lo_nans,hi_nans)
+        print("number of nans", len(nans))
+        self.lo_opt_pts = np.delete(self.lo_opt_pts, nans)
+        self.hi_opt_pts = np.delete(self.hi_opt_pts, nans)
+        self.idxes_of_design_pts_to_opt = np.delete(self.idxes_of_design_pts_to_opt, nans)
+       
+    def improve_bounds(self):
+        '''
+        improved bounds in 1d
+        reference: Optimal confidence bands for shape-restricted curves, LUTZ DUMBGEN, Bernoulli9(3), 2003, 423-449
+        '''
+        lo = np.log(self.lo_opt_pts)
+        hi = np.log(self.hi_opt_pts)
+        x = self.X[self.idxes_of_design_pts_to_opt]
+        
+#         self.improved_lo_opt_pts = np.zeros(self.num_design_pts_to_opt)
+        
+        m = self.num_design_pts_to_opt
+        truepoints = [np.array([x[i], lo[i]]) for i in range(m)]
+        lo_min = np.min(lo)
+        shadowpoints = [np.array([x[i], lo_min - 1.0]) for i in range(m)]
+        allpoints = np.array(truepoints + shadowpoints)
+        hull = ConvexHull(allpoints)
+        result_idx = []
+        for simplex in hull.simplices:
+            if all(simplex < m):
+                result_idx.extend([i for i in simplex])
+        result_idx_sort = sorted(list(set(result_idx)))
+        for i in range(len(result_idx_sort) - 1):
+            self.improved_lo_opt_pts[result_idx_sort[i]] = np.exp(lo[result_idx_sort[i]])
+            slop = (lo[result_idx_sort[i + 1]] - lo[result_idx_sort[i]]) / (x[result_idx_sort[i + 1]] - x[result_idx_sort[i]])
+            for j in range(result_idx_sort[i], result_idx_sort[i + 1]):
+                self.improved_lo_opt_pts[j] = np.exp(slop * (x[j] - x[result_idx_sort[i]]) + lo[result_idx_sort[i]])
+        self.improved_lo_opt_pts[m-1] = np.exp(lo[m-1])
+        
+        u_hat_hat = -np.log(self.improved_lo_opt_pts)
+        l_hat = -hi
+        f_u_hat_hat = interpolate.interp1d(x, u_hat_hat)
+        f_l_hat = interpolate.interp1d(x, l_hat)
+        self.improved_hi_at_x = np.unique(np.concatenate([x, np.arange(min(x), max(x), 0.05)]))
+        u_hat_hat = f_u_hat_hat(self.improved_hi_at_x)
+        l_hat = f_l_hat(self.improved_hi_at_x)
+
+        num = len(self.improved_hi_at_x)
+        self.improved_hi_opt_pts = np.zeros(num)
+        for idx in range(num):
+            helper1 = -np.inf
+            helper2 = -np.inf
+            for i in range(0, idx + 1): #t
+                for j in range(0, i): #s
+                    helper1 = max(helper1, u_hat_hat[j] + (l_hat[i] - u_hat_hat[j])
+                                  / (self.improved_hi_at_x[i] - self.improved_hi_at_x[j]) 
+                                  * (self.improved_hi_at_x[idx] - self.improved_hi_at_x[j]))
+            for i in range(idx + 1, num):
+                for j in range(idx, i):
+                    helper2 = max(helper2, u_hat_hat[i] - (u_hat_hat[i] - l_hat[j])
+                                  / (self.improved_hi_at_x[i] - self.improved_hi_at_x[j]) 
+                                  * (self.improved_hi_at_x[i] - self.improved_hi_at_x[idx]))
+            self.improved_hi_opt_pts[idx] = np.exp(-max(helper1, helper2))
