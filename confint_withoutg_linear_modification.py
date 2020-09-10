@@ -70,15 +70,16 @@ class confint():
         self.lo_opt_pts = np.zeros(self.num_design_pts_to_opt)
         self.hi_opt_pts = np.zeros(self.num_design_pts_to_opt)
         
-        self.improved_lo_opt_pts = np.zeros(self.num_design_pts_to_opt)
-        self.improved_hi_opt_pts = np.zeros(self.num_design_pts_to_opt)
-        self.improved_hi_at_x = np.zeros(self.num_design_pts_to_opt)
+        self.improved_lo_opt_pts = None
+        self.improved_hi_opt_pts = None
 
         # shared memory
         self.lo = Array('d', m)
         self.hi = Array('d', m)
         self.lo_slack = Array('d', m)
         self.hi_slack = Array('d', m)
+        
+        self.num_nans = 0
 
         assert(J_card == len(ds))
         assert(J_card == len(cs))
@@ -221,9 +222,9 @@ class confint():
 
     def ccp_iterations(self, prob, ell, s, s_new, ell_prev, tau, A, A_new, A_8, b, b_new, b_8, weights,
                        m, J_card, X, idxes_of_design_pts, p, ell_g_idxes_to_sum_over, cs, ds, modification,
-                       want_max=False,
-                       want_verbose=False, solver_choice="MOSEK",
-                       tau_max=1e3, tau_init=1e-3, opt_tol=1e-4, s_tol=1e-4, mu=8.0, max_iters=50, min_iters=10):
+                       want_max,
+                       want_verbose, solver_choice,
+                       tau_max, tau_init, opt_tol, s_tol, mu, max_iters, min_iters):
 
         if (want_max == False):
             weights.value = [0 for i in range(0, p)] + [1] + [0 for i in range(p + 1, m)]
@@ -345,28 +346,31 @@ class confint():
             if((np.abs(objf_val_prev - objf_val) <= opt_tol * np.abs(objf_val) \
                  and (s_sum < s_tol) and (iter_idx >= min_iters)) \
                     or (solver_failed == True) ):
-                print("  quitting early ...")
+                if(want_verbose):
+                    print("  quitting early ...")
                 break
             ell_prev.value = ell.value
             tau.value = min(mu * tau.value, tau_max)
             objf_val_prev = objf_val
 
         # print result
-        if not want_max:
-            print("minimizing over ell[",p,"]:",
-            "result: objf (i.e., log prob)=", objf_val,
-            "slack sum=", s_sum, "tau=", tau.value, "prob.status=", prob.status,
-            "num of iters", iter_idx)
-        else:
-            print("maximizing over ell[",p,"]:",
-            "result: objf (i.e., log prob)=", objf_val,
-            "slack sum=", s_sum, "tau=", tau.value, "prob.status=", prob.status,
-            "num of iters", iter_idx)
+        if want_verbose:
+            if not want_max:
+                print("minimizing over ell[",p,"]:",
+                "result: objf (i.e., log prob)=", objf_val,
+                "slack sum=", s_sum, "tau=", tau.value, "prob.status=", prob.status,
+                "num of iters=", iter_idx)
+            else:
+                print("maximizing over ell[",p,"]:",
+                "result: objf (i.e., log prob)=", objf_val,
+                "slack sum=", s_sum, "tau=", tau.value, "prob.status=", prob.status,
+                "num of iters=", iter_idx)
 
         return solver_failed, s_sum
 
-    def worker(self, X, m, J_card, ell_g_idxes_to_sum_over, idxes_of_design_pts, ds, cs, modification,
-               M, tau_max, mu, max_iters, solver_choice,
+    def worker(self, X, m, J_card, ell_g_idxes_to_sum_over, idxes_of_design_pts, ds, cs, modification, M, 
+               want_verbose, solver_choice,
+               tau_max, tau_init, opt_tol, s_tol, mu, max_iters, min_iters,
                pipe):
 
         prob, ell, s, s_new, ell_prev, tau, A, A_new, A_8, b, b_new, b_8, weights \
@@ -376,17 +380,19 @@ class confint():
             pipe_receive = pipe.recv()
             p = pipe_receive
             if p >= m:
-                print ("invalid test point index", p)
+                if (want_verbose):
+                    print ("invalid test point index", p)
                 pipe.send(0)
                 break
-            print("worker received", p, "begin ccp iterations")
+            if (want_verbose):
+                print("worker received", p, "begin ccp iterations")
 
             solver_failed, s_sum = self.ccp_iterations(prob, ell, s, s_new, ell_prev, tau, A, A_new, A_8, b, b_new, b_8, weights,
                                                        m, J_card, X, idxes_of_design_pts, p, ell_g_idxes_to_sum_over, cs, ds,
                                                        modification,
-                                                       solver_choice=solver_choice,
-                                                       tau_max=tau_max, mu=mu, max_iters=max_iters)
-
+                                                       False,
+                                                       want_verbose, solver_choice,
+                                                       tau_max, tau_init, opt_tol, s_tol, mu, max_iters, min_iters)
 
             if (solver_failed == False):
                 self.lo[p] = np.exp(ell[p].value)
@@ -398,9 +404,9 @@ class confint():
             solver_failed, s_sum = self.ccp_iterations(prob, ell, s, s_new, ell_prev, tau, A, A_new, A_8, b, b_new, b_8, weights,
                                                        m, J_card, X, idxes_of_design_pts, p, ell_g_idxes_to_sum_over, cs, ds,
                                                        modification,
-                                                       solver_choice=solver_choice,
-                                                       tau_max=tau_max, mu=mu, max_iters=max_iters,
-                                                       want_max=True)
+                                                       True,
+                                                       want_verbose, solver_choice,
+                                                       tau_max, tau_init, opt_tol, s_tol, mu, max_iters, min_iters)
             if (solver_failed == False):
                 self.hi[p] = np.exp(ell[p].value)
                 self.hi_slack[p] = s_sum
@@ -410,11 +416,14 @@ class confint():
 
             pipe.send(0)
 
-    def compute_pw_conf_ints(self, thread_num, M, tau_max, mu, max_iters, modification=0, solver_choice="MOSEK"):
+    def compute_pw_conf_ints(self, thread_num=2, modification=0,
+                             M=8.0, tau_max=1e3, mu=8.0, max_iters=50, min_iters=20,
+                             tau_init=1e-5, opt_tol=1e-4, s_tol=1e-4,
+                             solver_choice="MOSEK", want_verbose=False):
         # Setup the workers
         pipes = []
         procs = []
-
+        
         print("setup workers")
 
         t0 = time.time()
@@ -422,10 +431,10 @@ class confint():
         for i in range(thread_num):
             local, remote = Pipe()
             pipes += [local]
-
             procs += [Process(target=self.worker, args=(self.X, self.m, self.J_card, self.ell_g_idxes_to_sum_over,
-                                                        self.idxes_of_design_pts, self.ds, self.cs, modification,
-                                                        M, tau_max, mu, max_iters, solver_choice,
+                                                        self.idxes_of_design_pts, self.ds, self.cs, modification, M, 
+                                                        want_verbose, solver_choice,
+                                                        tau_max, tau_init, opt_tol, s_tol, mu, max_iters, min_iters,
                                                         remote))]
             procs[-1].start()
 
@@ -438,7 +447,9 @@ class confint():
         for j in range(outer_loop_num):
             [pipes[i].send(idxes_opt_pts_in_design_pts_ext[j * thread_num + i]) for i in range(thread_num)]
             [pipe.recv() for pipe in pipes]
-            print("outer loop", j, self.lo[:], self.hi[:])
+            print("outer loop ", j, " finished") 
+            if (want_verbose):
+                print(self.lo[:], self.hi[:])
 
         t2 =time.time()
 
@@ -459,23 +470,24 @@ class confint():
         lo_nans = np.where(np.isnan(self.lo_opt_pts))
         hi_nans = np.where(np.isnan(self.hi_opt_pts))
         nans = np.union1d(lo_nans,hi_nans)
+        self.failure_design_pts = self.X[self.idxes_of_design_pts_to_opt[nans]]
         print("number of nans", len(nans))
+        self.num_nans = len(nans)
         self.lo_opt_pts = np.delete(self.lo_opt_pts, nans)
         self.hi_opt_pts = np.delete(self.hi_opt_pts, nans)
         self.idxes_of_design_pts_to_opt = np.delete(self.idxes_of_design_pts_to_opt, nans)
-       
-    def improve_bounds(self):
+        self.num_design_pts_to_opt = len(self.idxes_of_design_pts_to_opt)
+        
+    def improve_bounds_new(self):
         '''
         improved bounds in 1d
-        reference: Optimal confidence bands for shape-restricted curves, LUTZ DUMBGEN, Bernoulli9(3), 2003, 423-449
         '''
         lo = np.log(self.lo_opt_pts)
         hi = np.log(self.hi_opt_pts)
-        x = self.X[self.idxes_of_design_pts_to_opt]
-        
-#         self.improved_lo_opt_pts = np.zeros(self.num_design_pts_to_opt)
-        
+        x = self.X[self.idxes_of_design_pts_to_opt]        
         m = self.num_design_pts_to_opt
+        self.improved_lo_opt_pts = np.zeros(m)
+        
         truepoints = [np.array([x[i], lo[i]]) for i in range(m)]
         lo_min = np.min(lo)
         shadowpoints = [np.array([x[i], lo_min - 1.0]) for i in range(m)]
@@ -493,27 +505,94 @@ class confint():
                 self.improved_lo_opt_pts[j] = np.exp(slop * (x[j] - x[result_idx_sort[i]]) + lo[result_idx_sort[i]])
         self.improved_lo_opt_pts[m-1] = np.exp(lo[m-1])
         
-        u_hat_hat = -np.log(self.improved_lo_opt_pts)
-        l_hat = -hi
-        f_u_hat_hat = interpolate.interp1d(x, u_hat_hat)
-        f_l_hat = interpolate.interp1d(x, l_hat)
-        self.improved_hi_at_x = np.unique(np.concatenate([x, np.arange(min(x), max(x), 0.05)]))
-        u_hat_hat = f_u_hat_hat(self.improved_hi_at_x)
-        l_hat = f_l_hat(self.improved_hi_at_x)
+        ######
+        lo = np.log(self.improved_lo_opt_pts)
+        Left = np.zeros(m)
+        Right = np.zeros(m)
+        for k in range(1, m):
+            Left[k] = min([(hi[k] - lo[j])/(x[k] - x[j]) for j in range(k)])
+        for k in range(0, m-1):
+            Right[k] = max([(lo[j] - hi[k])/(x[j] - x[k]) for j in range(k+1, m)])
+        kink_points = np.zeros(m)
+        for i in range(1, m-2):
+            kink_points[i] = (hi[i+1] - hi[i] + Left[i] * x[i] - Right[i+1] * x[i+1]) / (Left[i] - Right[i+1])
+        # extended_x = np.zeros(m + m - 3)
+        ###
+        extended_x = [x[0]]
+        extended_hi = [hi[0]]#[hi[1] + Right[1] * (x[0] - x[1])]
+        extended_lo = [lo[0]]
+        for i in range(1, m-2):
+            extended_x.append(x[i])
+            extended_x.append(kink_points[i])
+            extended_hi.append(hi[i])
+            extended_hi.append(hi[i] + Left[i] * (kink_points[i] - x[i]))
+            extended_lo.append(lo[i])
+            slop = (lo[i] - lo[i+1]) / (x[i] - x[i+1])
+            extended_lo.append(lo[i+1] + slop * (kink_points[i] - x[i+1]))
+        extended_x.append(x[m-2])
+        extended_hi.append(hi[m-2])
+        extended_lo.append(lo[m-2])
+                          
+        extended_x.append(x[m-1])
+        extended_hi.append(hi[m-1])
+        extended_lo.append(lo[m-1])
+        
+        
+        self.extended_x = np.array(extended_x)
+        self.improved_hi_extended_pts = np.exp(np.array(extended_hi))
+        self.improved_lo_extended_pts = np.exp(np.array(extended_lo))
+       
+#     def improve_bounds(self):
+#         '''
+#         improved bounds in 1d
+#         reference: Optimal confidence bands for shape-restricted curves, LUTZ DUMBGEN, Bernoulli9(3), 2003, 423-449
+#         '''
+#         lo = np.log(self.lo_opt_pts)
+#         hi = np.log(self.hi_opt_pts)
+#         x = self.X[self.idxes_of_design_pts_to_opt]        
+#         m = self.num_design_pts_to_opt
+#         self.improved_lo_opt_pts = np.zeros(m)
+        
+#         truepoints = [np.array([x[i], lo[i]]) for i in range(m)]
+#         lo_min = np.min(lo)
+#         shadowpoints = [np.array([x[i], lo_min - 1.0]) for i in range(m)]
+#         allpoints = np.array(truepoints + shadowpoints)
+#         hull = ConvexHull(allpoints)
+#         result_idx = []
+#         for simplex in hull.simplices:
+#             if all(simplex < m):
+#                 result_idx.extend([i for i in simplex])
+#         result_idx_sort = sorted(list(set(result_idx)))
+#         for i in range(len(result_idx_sort) - 1):
+#             self.improved_lo_opt_pts[result_idx_sort[i]] = np.exp(lo[result_idx_sort[i]])
+#             slop = (lo[result_idx_sort[i + 1]] - lo[result_idx_sort[i]]) / (x[result_idx_sort[i + 1]] - x[result_idx_sort[i]])
+#             for j in range(result_idx_sort[i], result_idx_sort[i + 1]):
+#                 self.improved_lo_opt_pts[j] = np.exp(slop * (x[j] - x[result_idx_sort[i]]) + lo[result_idx_sort[i]])
+#         self.improved_lo_opt_pts[m-1] = np.exp(lo[m-1])
+        
+#         u_hat_hat = -np.log(self.improved_lo_opt_pts)
+#         l_hat = -hi
+#         f_u_hat_hat = interpolate.interp1d(x, u_hat_hat)
+#         f_l_hat = interpolate.interp1d(x, l_hat)
+        
+#         self.improved_hi_at_x = np.unique(np.concatenate([x, np.arange(min(x), max(x), 0.1)]))
+        
+#         u_hat_hat = f_u_hat_hat(self.improved_hi_at_x)
+#         l_hat = f_l_hat(self.improved_hi_at_x)
 
-        num = len(self.improved_hi_at_x)
-        self.improved_hi_opt_pts = np.zeros(num)
-        for idx in range(num):
-            helper1 = -np.inf
-            helper2 = -np.inf
-            for i in range(0, idx + 1): #t
-                for j in range(0, i): #s
-                    helper1 = max(helper1, u_hat_hat[j] + (l_hat[i] - u_hat_hat[j])
-                                  / (self.improved_hi_at_x[i] - self.improved_hi_at_x[j]) 
-                                  * (self.improved_hi_at_x[idx] - self.improved_hi_at_x[j]))
-            for i in range(idx + 1, num):
-                for j in range(idx, i):
-                    helper2 = max(helper2, u_hat_hat[i] - (u_hat_hat[i] - l_hat[j])
-                                  / (self.improved_hi_at_x[i] - self.improved_hi_at_x[j]) 
-                                  * (self.improved_hi_at_x[i] - self.improved_hi_at_x[idx]))
-            self.improved_hi_opt_pts[idx] = np.exp(-max(helper1, helper2))
+#         num = len(self.improved_hi_at_x)
+#         self.improved_hi_opt_pts = np.zeros(num)
+#         for idx in range(num):
+#             helper1 = -np.inf
+#             helper2 = -np.inf
+#             for i in range(0, idx + 1): #t
+#                 for j in range(0, i): #s
+#                     helper1 = max(helper1, u_hat_hat[j] + (l_hat[i] - u_hat_hat[j])
+#                                   / (self.improved_hi_at_x[i] - self.improved_hi_at_x[j]) 
+#                                   * (self.improved_hi_at_x[idx] - self.improved_hi_at_x[j]))
+#             for i in range(idx + 1, num):
+#                 for j in range(idx, i):
+#                     helper2 = max(helper2, u_hat_hat[i] - (u_hat_hat[i] - l_hat[j])
+#                                   / (self.improved_hi_at_x[i] - self.improved_hi_at_x[j]) 
+#                                   * (self.improved_hi_at_x[i] - self.improved_hi_at_x[idx]))
+#             self.improved_hi_opt_pts[idx] = np.exp(-max(helper1, helper2))
