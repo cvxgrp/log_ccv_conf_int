@@ -11,42 +11,12 @@ from multiprocessing import Array, Pipe, Process
 
 from numpy.random import choice
 from scipy.spatial import ConvexHull
-from scipy import interpolate
 
-def rhs_of_eq8(ell_p_plue_1_ell_p, x_p_plus_1, x_p, tol=1e-8):
-    ell_p_plus_1 = ell_p_plue_1_ell_p[0]
-    ell_p = ell_p_plue_1_ell_p[1]
-    if (np.abs(ell_p_plus_1 - ell_p) < tol):
-        return (x_p_plus_1 - x_p) * np.exp(ell_p)
-    else:
-        return (x_p_plus_1 - x_p) * np.exp(ell_p) * (np.exp(ell_p_plus_1 - ell_p) - 1) / (ell_p_plus_1 - ell_p)
-
-def rhs_of_eq7(ell_p_p_minus_1, x_p_plus_1, x_p, x_p_minus_1, tol=1e-8):
-    ell_p = ell_p_p_minus_1[0]
-    ell_p_minus_1 = ell_p_p_minus_1[1]
-    if (np.abs(ell_p - ell_p_minus_1) < tol):
-        return np.exp(ell_p) * (x_p_plus_1 - x_p)
-    else:
-        return np.exp(ell_p) * (np.exp((ell_p - ell_p_minus_1) / (x_p - x_p_minus_1) * (x_p_plus_1 - x_p)) - 1.0) \
-               / (ell_p - ell_p_minus_1) * (x_p - x_p_minus_1)
-
-def rhs_of_eq7_new(ell_p_plus_2_p_plus_1, x_p_plus_2, x_p_plus_1, x_p, tol=1e-8):
-    ell_p_plus_2 = ell_p_plus_2_p_plus_1[0]
-    ell_p_plus_1 = ell_p_plus_2_p_plus_1[1]
-    if (np.abs(ell_p_plus_2 - ell_p_plus_1) < tol):
-        return np.exp(ell_p_plus_1) * (x_p_plus_1 - x_p)
-    else:
-        return np.exp(ell_p_plus_1) * (1.0 - np.exp((ell_p_plus_2 - ell_p_plus_1) / (x_p_plus_2 - x_p_plus_1) * (x_p - x_p_plus_1))) \
-               / (ell_p_plus_2 - ell_p_plus_1) * (x_p_plus_2 - x_p_plus_1)
-
-grad_rhs_of_eq7 = grad(rhs_of_eq7)
-grad_rhs_of_eq7_new = grad(rhs_of_eq7_new)
-grad_rhs_of_eq8 = grad(rhs_of_eq8)
+from utility import *
 
 class confint():
 
     def __init__(self, n, X, alpha, opt_pts_ratio=1):
-
         self.X = X
         J, cs, ds, idxes_of_design_pts = self.generate_cs_ds(n, alpha)  # indices in J are among 1 to m
 
@@ -63,13 +33,13 @@ class confint():
         # subsample design points to optimize over
         self.idxes_of_design_pts_to_opt = self.sampling_pts_to_opt_over(opt_pts_ratio)
         self.num_design_pts_to_opt = len(self.idxes_of_design_pts_to_opt)
+        self.lo_opt_pts = np.zeros(self.num_design_pts_to_opt)
+        self.hi_opt_pts = np.zeros(self.num_design_pts_to_opt)
         print("num design points to optimize", self.num_design_pts_to_opt)
+
         list_idxes_of_design_pts = list(self.idxes_of_design_pts)
         self.idxes_opt_pts_in_design_pts = [list_idxes_of_design_pts.index(self.idxes_of_design_pts_to_opt[i])
                                             for i in range(self.num_design_pts_to_opt)]
-        self.lo_opt_pts = np.zeros(self.num_design_pts_to_opt)
-        self.hi_opt_pts = np.zeros(self.num_design_pts_to_opt)
-        
         self.improved_lo_opt_pts = None
         self.improved_hi_opt_pts = None
 
@@ -89,7 +59,8 @@ class confint():
         if sampling_ratio == 1.0:
             return self.idxes_of_design_pts
         sorted_idxes_of_design_pts = sorted(self.idxes_of_design_pts)
-        bin_width = min([self.X[sorted_idxes_of_design_pts[i+1]] - self.X[sorted_idxes_of_design_pts[i]] for i in range(self.m - 1)])
+        bin_width = min([self.X[sorted_idxes_of_design_pts[i+1]] - self.X[sorted_idxes_of_design_pts[i]]
+                         for i in range(self.m - 1)])
         design_pts_pdf = np.zeros(self.m)
 
         for i in range(self.m):
@@ -113,7 +84,7 @@ class confint():
                 other_idxes_of_design_pts.append(idx)
                 other_design_pts_pdf.append(design_pts_pdf[i])
         other_design_pts_pdf = np.array(other_design_pts_pdf)
-        sample_others = choice(other_idxes_of_design_pts, size = K - int(K * tail_ratio), replace=False,
+        sample_others = choice(other_idxes_of_design_pts, size=K - int(K * tail_ratio), replace=False,
                                p=1.0 / other_design_pts_pdf / np.sum(1.0 / other_design_pts_pdf))
         result = result + list(sample_others)
 
@@ -178,12 +149,8 @@ class confint():
 
         constrs_rhs_eq5 = []
         for idxes_idx, idxes in enumerate(ell_g_idxes_to_sum_over):
-            #rhs_eq_5_as_list = [
-            #            cp.exp((ell[i + 1] + ell[i]) / 2.0) * (X[idxes_of_design_pts[i + 1]] - X[idxes_of_design_pts[i]])
-            #            for i in idxes]
-            rhs_eq_5_as_list = [
-                (ell[i + 1] + ell[i]) / 2.0 * (X[idxes_of_design_pts[i + 1]] - X[idxes_of_design_pts[i]])
-                for i in idxes]
+            rhs_eq_5_as_list = [(ell[i + 1] + ell[i]) / 2.0 * (X[idxes_of_design_pts[i + 1]] - X[idxes_of_design_pts[i]])
+                                for i in idxes]
             idxes_sort = np.sort(idxes)
             constrs_rhs_eq5 += [np.log(ds[idxes_idx] / (X[idxes_of_design_pts[idxes_sort[-1] + 1]] - X[idxes_of_design_pts[idxes_sort[0]]]))
                                 * (X[idxes_of_design_pts[idxes_sort[-1] + 1]] - X[idxes_of_design_pts[idxes_sort[0]]])
@@ -222,8 +189,7 @@ class confint():
 
     def ccp_iterations(self, prob, ell, s, s_new, ell_prev, tau, A, A_new, A_8, b, b_new, b_8, weights,
                        m, J_card, X, idxes_of_design_pts, p, ell_g_idxes_to_sum_over, cs, ds, modification,
-                       want_max,
-                       want_verbose, solver_choice,
+                       want_max, want_verbose, solver_choice,
                        tau_max, tau_init, opt_tol, s_tol, mu, max_iters, min_iters):
 
         if (want_max == False):
@@ -365,7 +331,6 @@ class confint():
                 "result: objf (i.e., log prob)=", objf_val,
                 "slack sum=", s_sum, "tau=", tau.value, "prob.status=", prob.status,
                 "num of iters=", iter_idx)
-
         return solver_failed, s_sum
 
     def worker(self, X, m, J_card, ell_g_idxes_to_sum_over, idxes_of_design_pts, ds, cs, modification, M, 
@@ -516,10 +481,9 @@ class confint():
         kink_points = np.zeros(m)
         for i in range(1, m-2):
             kink_points[i] = (hi[i+1] - hi[i] + Left[i] * x[i] - Right[i+1] * x[i+1]) / (Left[i] - Right[i+1])
-        # extended_x = np.zeros(m + m - 3)
         ###
         extended_x = [x[0]]
-        extended_hi = [hi[0]]#[hi[1] + Right[1] * (x[0] - x[1])]
+        extended_hi = [hi[0]]
         extended_lo = [lo[0]]
         for i in range(1, m-2):
             extended_x.append(x[i])
@@ -536,63 +500,7 @@ class confint():
         extended_x.append(x[m-1])
         extended_hi.append(hi[m-1])
         extended_lo.append(lo[m-1])
-        
-        
+
         self.extended_x = np.array(extended_x)
         self.improved_hi_extended_pts = np.exp(np.array(extended_hi))
         self.improved_lo_extended_pts = np.exp(np.array(extended_lo))
-       
-#     def improve_bounds(self):
-#         '''
-#         improved bounds in 1d
-#         reference: Optimal confidence bands for shape-restricted curves, LUTZ DUMBGEN, Bernoulli9(3), 2003, 423-449
-#         '''
-#         lo = np.log(self.lo_opt_pts)
-#         hi = np.log(self.hi_opt_pts)
-#         x = self.X[self.idxes_of_design_pts_to_opt]        
-#         m = self.num_design_pts_to_opt
-#         self.improved_lo_opt_pts = np.zeros(m)
-        
-#         truepoints = [np.array([x[i], lo[i]]) for i in range(m)]
-#         lo_min = np.min(lo)
-#         shadowpoints = [np.array([x[i], lo_min - 1.0]) for i in range(m)]
-#         allpoints = np.array(truepoints + shadowpoints)
-#         hull = ConvexHull(allpoints)
-#         result_idx = []
-#         for simplex in hull.simplices:
-#             if all(simplex < m):
-#                 result_idx.extend([i for i in simplex])
-#         result_idx_sort = sorted(list(set(result_idx)))
-#         for i in range(len(result_idx_sort) - 1):
-#             self.improved_lo_opt_pts[result_idx_sort[i]] = np.exp(lo[result_idx_sort[i]])
-#             slop = (lo[result_idx_sort[i + 1]] - lo[result_idx_sort[i]]) / (x[result_idx_sort[i + 1]] - x[result_idx_sort[i]])
-#             for j in range(result_idx_sort[i], result_idx_sort[i + 1]):
-#                 self.improved_lo_opt_pts[j] = np.exp(slop * (x[j] - x[result_idx_sort[i]]) + lo[result_idx_sort[i]])
-#         self.improved_lo_opt_pts[m-1] = np.exp(lo[m-1])
-        
-#         u_hat_hat = -np.log(self.improved_lo_opt_pts)
-#         l_hat = -hi
-#         f_u_hat_hat = interpolate.interp1d(x, u_hat_hat)
-#         f_l_hat = interpolate.interp1d(x, l_hat)
-        
-#         self.improved_hi_at_x = np.unique(np.concatenate([x, np.arange(min(x), max(x), 0.1)]))
-        
-#         u_hat_hat = f_u_hat_hat(self.improved_hi_at_x)
-#         l_hat = f_l_hat(self.improved_hi_at_x)
-
-#         num = len(self.improved_hi_at_x)
-#         self.improved_hi_opt_pts = np.zeros(num)
-#         for idx in range(num):
-#             helper1 = -np.inf
-#             helper2 = -np.inf
-#             for i in range(0, idx + 1): #t
-#                 for j in range(0, i): #s
-#                     helper1 = max(helper1, u_hat_hat[j] + (l_hat[i] - u_hat_hat[j])
-#                                   / (self.improved_hi_at_x[i] - self.improved_hi_at_x[j]) 
-#                                   * (self.improved_hi_at_x[idx] - self.improved_hi_at_x[j]))
-#             for i in range(idx + 1, num):
-#                 for j in range(idx, i):
-#                     helper2 = max(helper2, u_hat_hat[i] - (u_hat_hat[i] - l_hat[j])
-#                                   / (self.improved_hi_at_x[i] - self.improved_hi_at_x[j]) 
-#                                   * (self.improved_hi_at_x[i] - self.improved_hi_at_x[idx]))
-#             self.improved_hi_opt_pts[idx] = np.exp(-max(helper1, helper2))
