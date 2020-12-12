@@ -104,7 +104,6 @@ class confint():
 
         for B in range(2, B_max + 1):
             n_B = int(np.floor((m - 1.0) / 2 ** (B - 2)))
-
             for i in range(1, n_B + 1):
                 j = 1.0 + (i - 1.0) * 2 ** (B - 2)  # among 1 to m
                 k = 1.0 + (i) * 2 ** (B - 2)
@@ -135,7 +134,7 @@ class confint():
                tau_max, tau_init, opt_tol, s_tol, mu, max_iters, min_iters,
                pipe):
 
-        prob, ell, s, s_new, ell_prev, tau, A, A_new, A_8, b, b_new, b_8, weights \
+        prob, ell, s_V, s_U, ell_prev, tau, A_V, A_U, A_L, b_V, b_U, b_L, weights \
             = generate_ccp_subp(M, m, J_card, X, idxes_of_design_pts, max_iters)
 
         while True:
@@ -149,7 +148,7 @@ class confint():
             if (want_verbose):
                 print("worker received", p, "begin ccp iterations")
 
-            solver_failed, s_sum = ccp_iterations(prob, ell, s, s_new, ell_prev, tau, A, A_new, A_8, b, b_new, b_8, weights,
+            solver_failed, s_sum = ccp_iterations(prob, ell, s_V, s_U, ell_prev, tau, A_V, A_U, A_L, b_V, b_U, b_L, weights,
                                                   m, J_card, X, idxes_of_design_pts, p, ell_g_idxes_to_sum_over, cs, ds,
                                                   False,
                                                   want_verbose, solver_choice,
@@ -162,7 +161,7 @@ class confint():
                 self.lo[p] = np.nan
                 self.lo_slack[p] = np.inf
 
-            solver_failed, s_sum = ccp_iterations(prob, ell, s, s_new, ell_prev, tau, A, A_new, A_8, b, b_new, b_8, weights,
+            solver_failed, s_sum = ccp_iterations(prob, ell, s_V, s_U, ell_prev, tau, A_V, A_U, A_L, b_V, b_U, b_L, weights,
                                                   m, J_card, X, idxes_of_design_pts, p, ell_g_idxes_to_sum_over, cs, ds,
                                                   True,
                                                   want_verbose, solver_choice,
@@ -208,7 +207,7 @@ class confint():
                 print("outer loop ", j, " finished")
                 print(self.lo[:], self.hi[:])
 
-        t2 =time.time()
+        t2 = time.time()
 
         [proc.terminate() for proc in procs]
         if (want_verbose):
@@ -230,7 +229,7 @@ class confint():
     def remove_nan(self):
         lo_nans = np.where(np.isnan(self.lo_opt_pts))
         hi_nans = np.where(np.isnan(self.hi_opt_pts))
-        nans = np.union1d(lo_nans,hi_nans)
+        nans = np.union1d(lo_nans, hi_nans)
         self.failure_design_pts = self.X[self.idxes_of_design_pts_to_opt[nans]]
         self.num_nans = len(nans)
         self.lo_opt_pts = np.delete(self.lo_opt_pts, nans)
@@ -271,8 +270,7 @@ class confint():
             for j in range(result_idx_sort[i], result_idx_sort[i + 1]):
                 self.improved_lo_opt_pts[j] = np.exp(slop * (x[j] - x[result_idx_sort[i]]) + lo[result_idx_sort[i]])
         self.improved_lo_opt_pts[m-1] = np.exp(lo[m-1])
-        
-        ######
+
         lo = np.log(self.improved_lo_opt_pts)
         Left = np.zeros(m)
         Right = np.zeros(m)
@@ -283,7 +281,7 @@ class confint():
         kink_points = np.zeros(m)
         for i in range(1, m-2):
             kink_points[i] = (hi[i+1] - hi[i] + Left[i] * x[i] - Right[i+1] * x[i+1]) / (Left[i] - Right[i+1])
-        ###
+
         extended_x = [x[0]]
         extended_hi = [hi[0]]
         extended_lo = [lo[0]]

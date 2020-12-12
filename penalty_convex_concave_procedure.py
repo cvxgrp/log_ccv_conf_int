@@ -14,31 +14,31 @@ def generate_ccp_subp(M, m, J_card, X, idxes_of_design_pts, max_iters):
         * (X[idxes_of_design_pts[i + 1]] - X[idxes_of_design_pts[i]])
         for i in range(1, m - 1)]
 
-    A = cp.Parameter((J_card, m))
-    b = cp.Parameter(J_card)
-    s = cp.Variable(J_card, nonneg=True)
-    constrs_rhs_eq7 = [-A @ (ell - ell_prev) - b <= s]
+    A_V = cp.Parameter((J_card, m))
+    b_V = cp.Parameter(J_card)
+    s_V = cp.Variable(J_card, nonneg=True)
+    constrs_V = [-A_V @ (ell - ell_prev) - b_V <= s_V]
 
-    A_new = cp.Parameter((J_card, m))
-    b_new = cp.Parameter(J_card)
-    s_new = cp.Variable(J_card, nonneg=True)
-    constrs_rhs_eq7_new = [-A_new @ (ell - ell_prev) - b_new <= s_new]
+    A_U = cp.Parameter((J_card, m))
+    b_U = cp.Parameter(J_card)
+    s_U = cp.Variable(J_card, nonneg=True)
+    constrs_U = [-A_U @ (ell - ell_prev) - b_U <= s_U]
 
-    A_8 = cp.Parameter((J_card * max_iters, m))
-    b_8 = cp.Parameter(J_card * max_iters)
-    constrs_eq8 = [A_8 @ ell + b_8 <= 0]
+    A_L = cp.Parameter((J_card * max_iters, m))
+    b_L = cp.Parameter(J_card * max_iters)
+    constrs_L = [A_L @ ell + b_L <= 0]
 
     constrs_numeric_lower_bound = [ell >= -M]
 
-    constrs = constrs_log_concavity + constrs_rhs_eq7 + constrs_rhs_eq7_new + constrs_eq8 + constrs_numeric_lower_bound
+    constrs = constrs_log_concavity + constrs_V + constrs_U + constrs_L + constrs_numeric_lower_bound
 
     weights = cp.Parameter(m)
-    objf = weights.T @ ell + tau * cp.sum(s) + tau * cp.sum(s_new)
+    objf = weights.T @ ell + tau * cp.sum(s_V) + tau * cp.sum(s_U)
     prob = cp.Problem(cp.Minimize(objf), constrs)
 
-    return prob, ell, s, s_new, ell_prev, tau, A, A_new, A_8, b, b_new, b_8, weights
+    return prob, ell, s_V, s_U, ell_prev, tau, A_V, A_U, A_L, b_V, b_U, b_L, weights
 
-def ccp_iterations(prob, ell, s, s_new, ell_prev, tau, A, A_new, A_8, b, b_new, b_8, weights,
+def ccp_iterations(prob, ell, s_V, s_U, ell_prev, tau, A_V, A_U, A_L, b_V, b_U, b_L, weights,
                    m, J_card, X, idxes_of_design_pts, p, ell_g_idxes_to_sum_over, cs, ds,
                    want_max, want_verbose, solver_choice,
                    tau_max, tau_init, opt_tol, s_tol, mu, max_iters, min_iters):
@@ -55,86 +55,85 @@ def ccp_iterations(prob, ell, s, s_new, ell_prev, tau, A, A_new, A_8, b, b_new, 
     ell_prev.value = np.log(g_kde.evaluate(X[idxes_of_design_pts]))
     s_sum = np.inf
 
-    A_value_8 = np.zeros((J_card * max_iters, m))
-    b_value_8 = -np.array(ds * max_iters)
+    A_L_value = np.zeros((J_card * max_iters, m))
+    b_L_value = -np.array(ds * max_iters)
 
     for iter_idx in range(max_iters):
         start = time.time()
-        # ineq 7
-        A_value = np.zeros((J_card, m))
-        b_value = -np.array(cs)
+        # ineq 7 V
+        A_V_value = np.zeros((J_card, m))
+        b_V_value = -np.array(cs)
         for idxes_idx, idxes in enumerate(ell_g_idxes_to_sum_over):
             for i in idxes:
                 if (i == 0):
-                    rhs_of_eq7_value = rhs_of_eq7_new(
+                    func_value = upper_bound_U(
                         np.concatenate((np.array([ell_prev[2].value]), np.array([ell_prev[1].value]))),
                         X[idxes_of_design_pts[2]], X[idxes_of_design_pts[1]], X[idxes_of_design_pts[0]])
-                    rhs_of_eq7_grad = grad_rhs_of_eq7_new(
+                    grad_value = grad_upper_bound_U(
                         np.concatenate((np.array([ell_prev[2].value]), np.array([ell_prev[1].value]))),
                         X[idxes_of_design_pts[2]], X[idxes_of_design_pts[1]], X[idxes_of_design_pts[0]])
-                    A_value[idxes_idx, 2] += rhs_of_eq7_grad[0]
-                    A_value[idxes_idx, 1] += rhs_of_eq7_grad[1]
-                    b_value[idxes_idx] += rhs_of_eq7_value
+                    A_V_value[idxes_idx, 2] += grad_value[0]
+                    A_V_value[idxes_idx, 1] += grad_value[1]
+                    b_V_value[idxes_idx] += func_value
                 else:
-                    rhs_of_eq7_value = rhs_of_eq7(
+                    func_value = upper_bound_V(
                         np.concatenate((np.array([ell_prev[i].value]), np.array([ell_prev[i - 1].value]))),
                         X[idxes_of_design_pts[i + 1]], X[idxes_of_design_pts[i]], X[idxes_of_design_pts[i - 1]])
-                    rhs_of_eq7_grad = grad_rhs_of_eq7(
+                    grad_value = grad_upper_bound_V(
                         np.concatenate((np.array([ell_prev[i].value]), np.array([ell_prev[i - 1].value]))),
                         X[idxes_of_design_pts[i + 1]], X[idxes_of_design_pts[i]], X[idxes_of_design_pts[i - 1]])
-                    A_value[idxes_idx, i] += rhs_of_eq7_grad[0]
-                    A_value[idxes_idx, i - 1] += rhs_of_eq7_grad[1]
-                    b_value[idxes_idx] += rhs_of_eq7_value
-        # ineq 7 new
-        A_value_new = np.zeros((J_card, m))
-        b_value_new = -np.array(cs)
+                    A_V_value[idxes_idx, i] += grad_value[0]
+                    A_V_value[idxes_idx, i - 1] += grad_value[1]
+                    b_V_value[idxes_idx] += func_value
+        # ineq 7 new U
+        A_U_value = np.zeros((J_card, m))
+        b_U_value = -np.array(cs)
         for idxes_idx, idxes in enumerate(ell_g_idxes_to_sum_over):
             for i in idxes:
-                if (i == m- 2):
-                    rhs_of_eq7_value = rhs_of_eq7(
+                if (i == m - 2):
+                    func_value = upper_bound_V(
                         np.concatenate((np.array([ell_prev[i].value]), np.array([ell_prev[i - 1].value]))),
                         X[idxes_of_design_pts[i + 1]], X[idxes_of_design_pts[i]], X[idxes_of_design_pts[i - 1]])
-                    rhs_of_eq7_grad = grad_rhs_of_eq7(
+                    grad_value = grad_upper_bound_V(
                         np.concatenate((np.array([ell_prev[i].value]), np.array([ell_prev[i - 1].value]))),
                         X[idxes_of_design_pts[i + 1]], X[idxes_of_design_pts[i]], X[idxes_of_design_pts[i - 1]])
-                    A_value_new[idxes_idx, i] += rhs_of_eq7_grad[0]
-                    A_value_new[idxes_idx, i - 1] += rhs_of_eq7_grad[1]
-                    b_value_new[idxes_idx] += rhs_of_eq7_value
+                    A_U_value[idxes_idx, i] += grad_value[0]
+                    A_U_value[idxes_idx, i - 1] += grad_value[1]
+                    b_U_value[idxes_idx] += func_value
                 else:
-                    rhs_of_eq7_value = rhs_of_eq7_new(
+                    func_value = upper_bound_U(
                         np.concatenate((np.array([ell_prev[i + 2].value]), np.array([ell_prev[i + 1].value]))),
                         X[idxes_of_design_pts[i + 2]], X[idxes_of_design_pts[i + 1]],
                         X[idxes_of_design_pts[i]])
-                    rhs_of_eq7_grad = grad_rhs_of_eq7_new(
+                    grad_value = grad_upper_bound_U(
                         np.concatenate((np.array([ell_prev[i + 2].value]), np.array([ell_prev[i + 1].value]))),
                         X[idxes_of_design_pts[i + 2]], X[idxes_of_design_pts[i + 1]],
                         X[idxes_of_design_pts[i]])
-                    A_value_new[idxes_idx, i + 2] += rhs_of_eq7_grad[0]
-                    A_value_new[idxes_idx, i + 1] += rhs_of_eq7_grad[1]
-                    b_value_new[idxes_idx] += rhs_of_eq7_value
+                    A_U_value[idxes_idx, i + 2] += grad_value[0]
+                    A_U_value[idxes_idx, i + 1] += grad_value[1]
+                    b_U_value[idxes_idx] += func_value
 
-        # ineq 8
+        # ineq 8 L
         for idxes_idx, idxes in enumerate(ell_g_idxes_to_sum_over):
             for i in idxes:
-                lhs_of_eq8_value = rhs_of_eq8(
+                func_value = lower_bound_L(
                     np.concatenate((np.array([ell_prev[i + 1].value]), np.array([ell_prev[i].value]))),
                     X[idxes_of_design_pts[i + 1]], X[idxes_of_design_pts[i]])
-                lhs_of_eq8_grad = grad_rhs_of_eq8(
+                grad_value = grad_lower_bound_L(
                     np.concatenate((np.array([ell_prev[i + 1].value]), np.array([ell_prev[i].value]))),
                     X[idxes_of_design_pts[i + 1]], X[idxes_of_design_pts[i]])
-                A_value_8[iter_idx * J_card + idxes_idx, i + 1] += lhs_of_eq8_grad[0]
-                A_value_8[iter_idx * J_card + idxes_idx, i] += lhs_of_eq8_grad[1]
-                b_value_8[iter_idx * J_card + idxes_idx] += lhs_of_eq8_value
-            b_value_8[iter_idx * J_card + idxes_idx] += - ell_prev.value.dot(
-                A_value_8[iter_idx * J_card + idxes_idx, :])
+                A_L_value[iter_idx * J_card + idxes_idx, i + 1] += grad_value[0]
+                A_L_value[iter_idx * J_card + idxes_idx, i] += grad_value[1]
+                b_L_value[iter_idx * J_card + idxes_idx] += func_value
+            b_L_value[iter_idx * J_card + idxes_idx] += - ell_prev.value.dot(A_L_value[iter_idx * J_card + idxes_idx, :])
 
         try:
-            A.value = A_value
-            b.value = b_value
-            A_new.value = A_value_new
-            b_new.value = b_value_new
-            A_8.value = A_value_8
-            b_8.value = b_value_8
+            A_V.value = A_V_value
+            b_V.value = b_V_value
+            A_U.value = A_U_value
+            b_U.value = b_U_value
+            A_L.value = A_L_value
+            b_L.value = b_L_value
             if (solver_choice == "ECOS"):
                 prob.solve(verbose=False, solver=solver_choice, warm_start=True, abstol=1e-9, reltol=1e-9)
             elif (solver_choice == "MOSEK"):
@@ -144,7 +143,7 @@ def ccp_iterations(prob, ell, s, s_new, ell_prev, tau, A, A_new, A_8, b, b_new, 
             else:
                 print("ERROR: unsupported solver")
                 break
-            s_sum = np.sum(s.value) + np.sum(s_new.value)
+            s_sum = np.sum(s_V.value) + np.sum(s_U.value)
             objf_val = ell[p].value
             end = time.time()
             if (want_verbose):
