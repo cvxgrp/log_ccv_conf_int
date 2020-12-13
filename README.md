@@ -1,5 +1,5 @@
 # log_ccv_conf_int
-confidence interval for log-concave density in 1-d
+Implementation of the paper "Walther G, Ali A, Shen X, Boyd S. Confidence bands for a log-concave density".
 
 Please install [CVXPY 1.1](http://www.cvxpy.org/).
 
