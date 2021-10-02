@@ -30,11 +30,18 @@ conf_int.compute_pw_conf_ints()
 The following optional arguments can be passed into the solve method.
 * `thread_num` gives the number of threads used to run the parallel algorithm.
 * algorithm parameters
-    * `tau_max` specifies the maximum value of penalty parameter `tau`, and the default value is `1e3`.
-    * `mu` specifies the increase of `tau`, and the default value is `8`.
+    * `tau_max` specifies the maximum value of penalty parameter `tau`. Default value is `1e3`.
+    * `tau_init` specifies the initial value of `tau`. Default value is `1e-5`.
+    * `kappa` specifies the penalty increase factor. Default value is `8`.
     * `max_iters` specifies the maximum number of iterations. Default value is `50`.
     * `min_iters` specifies the minimum number of iterations. Default value is `15`.
     * `M` gives a numeric lower bound `exp(-M)` on the density, and a typical value is around `10`.
 * `verbose` is a boolean giving the choice of printing information during the iterations. Default value is `False`.
 
-**Retrieve result.**
+**Retrieve result.** The result is stored in the following attributes of the constructed `confint` object.
+* `opt_pts` stores the optmized design points, at which the confidence intervals are optimized over.
+* `low_opt_pts` stores the lower confidence bound at `opt_pts`.
+* `high_opt_pts` stores the higher confidence bound at `opt_pts`.
+* `opt_int_pts` stores the union of optmized design points and interpolation points.
+* `low_opt_int_pts` stores the lower confidence bound at `opt_int_pts`.
+* `high_opt_int_pts` stores the higher confidence bound at `opt_int_pts`.
