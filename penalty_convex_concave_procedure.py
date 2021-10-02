@@ -4,6 +4,7 @@ import autograd.numpy as np
 import time
 from utility import *
 
+
 def generate_ccp_subp(M, m, J_card, X, idxes_of_design_pts, max_iters):
     ell = cp.Variable(m)
     ell_prev = cp.Parameter(m)
@@ -38,11 +39,11 @@ def generate_ccp_subp(M, m, J_card, X, idxes_of_design_pts, max_iters):
 
     return prob, ell, s_V, s_U, ell_prev, tau, A_V, A_U, A_L, b_V, b_U, b_L, weights
 
+
 def ccp_iterations(prob, ell, s_V, s_U, ell_prev, tau, A_V, A_U, A_L, b_V, b_U, b_L, weights,
                    m, J_card, X, idxes_of_design_pts, p, ell_g_idxes_to_sum_over, cs, ds,
-                   want_max, want_verbose, solver_choice,
-                   tau_max, tau_init, opt_tol, s_tol, mu, max_iters, min_iters):
-    if (want_max == False):
+                   want_max, want_verbose, solver_choice, tau_max, tau_init, opt_tol, s_tol, mu, max_iters, min_iters):
+    if not want_max:
         weights.value = [0 for i in range(0, p)] + [1] + [0 for i in range(p + 1, m)]
     else:
         weights.value = [0 for i in range(0, p)] + [-1] + [0 for i in range(p + 1, m)]
@@ -134,11 +135,11 @@ def ccp_iterations(prob, ell, s_V, s_U, ell_prev, tau, A_V, A_U, A_L, b_V, b_U, 
             b_U.value = b_U_value
             A_L.value = A_L_value
             b_L.value = b_L_value
-            if (solver_choice == "ECOS"):
+            if solver_choice == "ECOS":
                 prob.solve(verbose=False, solver=solver_choice, warm_start=True, abstol=1e-9, reltol=1e-9)
-            elif (solver_choice == "MOSEK"):
+            elif solver_choice == "MOSEK":
                 prob.solve(verbose=False, solver=solver_choice, warm_start=True)
-            elif (solver_choice == "SCS"):
+            elif solver_choice == "SCS":
                 prob.solve(verbose=False, solver=solver_choice, warm_start=True, eps=1e-9, max_iters=10000)
             else:
                 print("ERROR: unsupported solver")
@@ -146,21 +147,20 @@ def ccp_iterations(prob, ell, s_V, s_U, ell_prev, tau, A_V, A_U, A_L, b_V, b_U, 
             s_sum = np.sum(s_V.value) + np.sum(s_U.value)
             objf_val = ell[p].value
             end = time.time()
-            if (want_verbose):
+            if want_verbose:
                 print(
                     "  objf (i.e., log prob)=%f, prob=%f, slack sum=%f, tau=%f, prob.status=%s, after iter #%d, time elapsed=%f" %
                     (objf_val, np.exp(objf_val), s_sum, tau.value, prob.status, iter_idx + 1, (end - start)))
         except Exception as e:
             solver_failed = True
-            if (want_verbose):
+            if want_verbose:
                 print("  WARNING: solver failed w/ prob.status=%s + error message=%s; quitting early ..." %
                       (prob.status, e))
             break
 
-        if ((np.abs(objf_val_prev - objf_val) <= opt_tol * np.abs(objf_val) \
-             and (s_sum < s_tol) and (iter_idx >= min_iters)) \
-                or (solver_failed == True)):
-            if (want_verbose):
+        if (np.abs(objf_val_prev - objf_val) <= opt_tol * np.abs(objf_val) and (s_sum < s_tol)
+            and (iter_idx >= min_iters)) or solver_failed:
+            if want_verbose:
                 print("  quitting early ...")
             break
         ell_prev.value = ell.value
