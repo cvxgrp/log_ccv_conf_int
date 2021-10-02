@@ -5,11 +5,13 @@ Please first install [CVXPY 1.1](http://www.cvxpy.org/).
 
 To test the method in one example, please run the jupyter notebook ```example.ipynb```.
 
-To run the experiments in the paper, please first run ```experiment_platform.ipynb``` to compute and save the confidence intervals. The number of design points, the distribution, the coverage rate, and the number of threads should be chosen and set. Then run ```compute_coverage_rate_and_width.ipynb``` to generate results in Table 1 in the paper.
+To run the experiments in the paper, please run ```experiment_platform.ipynb``` to compute and save the confidence intervals. The distribution, the number of design points, the coverage rate, and the number of threads should be chosen and set.
+
+After running the experiments, to generate a row of Table 1 in the paper, please run ```compute_coverage_rate_and_width.ipynb```. To generate the figures, please run ```plot_figure.ipynb```.
 
 ## Usage
 **Construct object.** Under the directory, import `confint`. 
-Given data `X`, to run the method with confidence level specified by `1 - alpha` and ratio of optimized points specified by `opt_pts_ratio`, 
+Given data `X`, to run the method with confidence level specified by `1 - alpha` and ratio of optimized design points specified by `opt_pts_ratio`, 
 first construct an object of the `confint` class. For example
 ```python3
 from confint import confint
@@ -17,6 +19,7 @@ import numpy as np
 
 X = np.random.randn(n)
 X = np.sort(X)
+alpha = 0.1
 opt_pts_ratio = 0.5
 
 conf_int = confint(X, alpha, opt_pts_ratio=opt_pts_ratio)
@@ -28,7 +31,7 @@ Following the above example, the code is as follows.
 conf_int.compute_pw_conf_ints()
 ```
 The following optional arguments can be passed into the solve method.
-* `thread_num` gives the number of threads used to run the parallel algorithm.
+* `thread_num` gives the number of threads used to run the algorithm in parallel accross optimized design points.
 * algorithm parameters
     * `tau_max` specifies the maximum value of penalty parameter `tau`. Default value is `1e3`.
     * `tau_init` specifies the initial value of `tau`. Default value is `1e-5`.
